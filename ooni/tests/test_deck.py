@@ -5,7 +5,10 @@ from twisted.trial import unittest
 
 from hashlib import sha256
 from ooni.deck import InputFile, Deck
+from ooni.tests.bases import ConfigTestCase
 from ooni.tests.mocks import MockBouncerClient, MockCollectorClient
+
+FAKE_BOUNCER_ADDRESS = "httpo://thirteenchars123.onion"
 
 net_test_string = """
 from twisted.python import usage
@@ -70,7 +73,7 @@ class BaseTestCase(unittest.TestCase):
             test_file: manipulation/http_invalid_request_line
             testdeck: null
 """
-
+        super(BaseTestCase, self).setUp()
 
 
 class TestInputFile(BaseTestCase):
@@ -111,7 +114,7 @@ class TestInputFile(BaseTestCase):
         assert input_file.descriptorCached
 
 
-class TestDeck(BaseTestCase):
+class TestDeck(BaseTestCase, ConfigTestCase):
     def setUp(self):
         super(TestDeck, self).setUp()
         deck_hash = sha256(self.dummy_deck_content).hexdigest()
@@ -126,9 +129,10 @@ class TestDeck(BaseTestCase):
         os.remove(self.deck_file)
         if self.filename != "":
             os.remove(self.filename)
+        super(TestDeck, self).tearDown()
 
     def test_open_deck(self):
-        deck = Deck(bouncer="httpo://foo.onion",
+        deck = Deck(bouncer=FAKE_BOUNCER_ADDRESS,
                     decks_directory=".")
         deck.loadDeck(self.deck_file)
         assert len(deck.netTestLoaders) == 1
@@ -138,7 +142,7 @@ class TestDeck(BaseTestCase):
             "annotations": {"spam": "ham"},
             "collector": "httpo://thirteenchars123.onion"
         }
-        deck = Deck(bouncer="httpo://foo.onion",
+        deck = Deck(bouncer=FAKE_BOUNCER_ADDRESS,
                     decks_directory=".")
         deck.loadDeck(self.deck_file,
                       global_options=global_options)
@@ -152,7 +156,7 @@ class TestDeck(BaseTestCase):
         )
 
     def test_save_deck_descriptor(self):
-        deck = Deck(bouncer="httpo://foo.onion",
+        deck = Deck(bouncer=FAKE_BOUNCER_ADDRESS,
                     decks_directory=".")
         deck.loadDeck(self.deck_file)
         deck.load({'name': 'spam',
@@ -168,8 +172,9 @@ class TestDeck(BaseTestCase):
 
     @defer.inlineCallbacks
     def test_lookup_test_helpers_and_collector(self):
-        deck = Deck(bouncer="httpo://foo.onion",
+        deck = Deck(bouncer=FAKE_BOUNCER_ADDRESS,
                     decks_directory=".")
+        deck.bouncer = MockBouncerClient(FAKE_BOUNCER_ADDRESS)
         deck._BouncerClient = MockBouncerClient
         deck._CollectorClient = MockCollectorClient
         deck.loadDeck(self.deck_file)
@@ -201,4 +206,57 @@ class TestDeck(BaseTestCase):
         self.assertEqual(
             deck.netTestLoaders[1].localOptions['backend'],
             '2.2.2.2'
+        )
+
+    @defer.inlineCallbacks
+    def test_lookup_test_helpers_and_collector_cloudfront(self):
+        self.config.advanced.preferred_backend = "cloudfront"
+        deck = Deck(bouncer=FAKE_BOUNCER_ADDRESS,
+                    decks_directory=".")
+        deck.bouncer = MockBouncerClient(FAKE_BOUNCER_ADDRESS)
+        deck._BouncerClient = MockBouncerClient
+        deck._CollectorClient = MockCollectorClient
+        deck.loadDeck(self.deck_file)
+
+        self.assertEqual(len(deck.netTestLoaders[0].missingTestHelpers), 1)
+
+        yield deck.lookupCollectorAndTestHelpers()
+
+        self.assertEqual(
+            deck.netTestLoaders[0].collector.settings['address'],
+            'https://address.cloudfront.net'
+        )
+        self.assertEqual(
+            deck.netTestLoaders[0].collector.settings['front'],
+            'https://front.cloudfront.net'
+        )
+
+        self.assertEqual(
+            deck.netTestLoaders[0].localOptions['backend'],
+            '127.0.0.1'
+        )
+
+
+    @defer.inlineCallbacks
+    def test_lookup_test_helpers_and_collector_https(self):
+        self.config.advanced.preferred_backend = "https"
+        deck = Deck(bouncer=FAKE_BOUNCER_ADDRESS,
+                    decks_directory=".")
+        deck.bouncer = MockBouncerClient(FAKE_BOUNCER_ADDRESS)
+        deck._BouncerClient = MockBouncerClient
+        deck._CollectorClient = MockCollectorClient
+        deck.loadDeck(self.deck_file)
+
+        self.assertEqual(len(deck.netTestLoaders[0].missingTestHelpers), 1)
+
+        yield deck.lookupCollectorAndTestHelpers()
+
+        self.assertEqual(
+            deck.netTestLoaders[0].collector.settings['address'],
+            'https://collector.ooni.io'
+        )
+
+        self.assertEqual(
+            deck.netTestLoaders[0].localOptions['backend'],
+            '127.0.0.1'
         )
